@@ -1,0 +1,519 @@
+
+
+-- EXECUTIVE REVENUE OVERVIEW
+
+
+-- (Revenue by segment)
+--Q1 which among our 5 product segments genrate the highest gross and net revenue for us? and how has the trend line been accross the years, exclude returned and cancelled orders
+
+
+-- Query 
+WITH gross_revenue AS (
+SELECT 
+	segment_name,
+	YEAR(transaction_date) year,
+	SUM(gross_revenue_usd) gross_revenue,
+	SUM(net_revenue_usd) net_revenue
+FROM vw_sales_enriched
+WHERE order_status NOT IN ('returned', 'cancelled')
+GROUP BY segment_name, YEAR(transaction_date)
+)
+SELECT 
+	segment_name,
+	year,
+	gross_revenue,
+	net_revenue,
+	CONCAT(ROUND(gross_revenue * 100.0 / sum(gross_revenue) OVER(PARTITION BY year), 2), '%') as gross_revenue_pct
+FROM gross_revenue
+ORDER BY year, gross_revenue DESC
+
+
+-- (Year over Year growth)
+--Q2 What is the year-over-year (YoY) revenue growth % for each segment?
+
+
+-- Query 
+WITH yearly_revenue AS (
+SELECT
+	segment_name,
+	YEAR(transaction_date) current_year,
+	SUM(gross_revenue_usd) total_revenue
+FROM vw_sales_enriched
+GROUP BY segment_name, YEAR(transaction_date)
+),
+lagged AS(
+SELECT
+	segment_name,
+	current_year,
+	total_revenue ,
+	LAG(total_revenue) OVER(PARTITION BY  segment_name ORDER BY current_year) prev_year_revenue
+FROM yearly_revenue
+)
+SELECT 
+	segment_name,
+	current_year,
+	total_revenue current_year_revenue,
+	prev_year_revenue,
+	ROUND(((total_revenue - prev_year_revenue) / nullif(prev_year_revenue, 0)) * 100, 2) YoY_revenue_prct
+FROM lagged
+ORDER BY segment_name, current_year
+
+
+-- (Gross Margin vs Target)
+--Q3 Which segments and categories are performing above or below their gross margin targets? Where exactly is margin compression happening?
+
+
+-- Query
+SELECT 
+	segment_name,
+	category_name,
+	AVG(gross_margin_pct) avg_gross_margin,
+	AVG(margin_target) avg_margin_target,
+	CASE WHEN AVG(gross_margin_pct) < AVG(margin_target) THEN 'Below target margin'
+		 WHEN AVG(gross_margin_pct) > AVG(margin_target) THEN 'Already met target margin'
+		 ELSE 'On Target'
+	END AS target_verification
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('cancelled','returned')
+GROUP BY segment_name, category_name
+
+
+-- (Revenue by Channel)
+--Q4 Which sales channels contribute most to our net revenue, and which are the most profitable in terms of margin?
+
+
+-- Query
+SELECT 
+	channel_name,
+	SUM(net_revenue_usd) net_revenue,
+	SUM(gross_profit_usd) gross_profit,
+	ROUND(SUM(gross_profit_usd) / SUM(net_revenue_usd) * 100, 2) profit_margin_pct 
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('cancelled','returned')
+GROUP BY channel_name
+ORDER BY net_revenue desc
+
+
+-- (Returns & Cancellations Impact)
+--Q5 What is our order return rate and cancellation rate, both overall and broken down by segment? 
+-- What is the total financial impact of these in USD.
+
+
+-- Query
+SELECT 
+	segment_name,
+	COUNT(transaction_id) total_orders,
+	SUM(CASE WHEN order_status = 'cancelled' THEN 1 ELSE 0 END) cancelled, 
+	SUM(CASE WHEN order_status = 'returned' THEN 1 ELSE 0 END) returned,
+	ROUND(sum(CASE WHEN order_status = 'cancelled' THEN 1 else 0 END) / count(transaction_id) * 100, 2) cancelled_rate_prct,
+	ROUND(sum(CASE WHEN order_status = 'returned' THEN 1 else 0 END) / count(transaction_id) * 100, 2) returned_rate_prct,
+	ROUND(sum(CASE WHEN order_status IN ('cancelled', 'returned') THEN gross_revenue_usd ELSE 0 END),0) financial_impact_per_seg,
+	ROUND(sum(sum(CASE WHEN order_status IN ('cancelled', 'returned') THEN gross_revenue_usd ELSE 0 END)) OVER(), 0) total_financial_impact
+FROM unilever_analytics.vw_sales_enriched
+GROUP BY segment_name
+
+
+-- (Top revenue market)
+--Q6 Which of our 40 markets generate the highest net revenue? (p1)
+-- Which emerging markets are showing the fastest growth year over year? (p2)
+
+
+-- Query
+-- (p1)
+SELECT 
+country_name,
+market_maturity,
+region,
+sum(net_revenue_usd) current_year_net_revenue
+from vw_sales_enriched
+where order_status not in ('returned','cancelled')
+group by country_name,market_maturity, region
+order by current_year_net_revenue desc
+
+-- p(2)
+WITH cte1 AS (
+SELECT
+	country_name,
+	YEAR(transaction_date) sale_year,
+	SUM(net_revenue_usd) net_revenue,
+	market_maturity
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned', 'cancelled')
+AND market_maturity = 'Emerging'
+GROUP BY country_name, YEAR(transaction_date), market_maturity
+
+),
+cte2 AS (
+SELECT
+	sale_year,
+	country_name,
+	net_revenue,
+	market_maturity,
+	LAG(net_revenue) OVER(PARTITION BY country_name ORDER BY sale_year) prev_year_revenue
+FROM cte1
+)
+SELECT
+	country_name,
+	market_maturity,
+	sale_year,
+	net_revenue,
+	prev_year_revenue,
+	ROUND((net_revenue - prev_year_revenue) / prev_year_revenue * 100,2) YoY_percentage
+FROM cte2
+WHERE prev_year_revenue IS NOT NULL
+ORDER BY YoY_percentage DESC
+
+
+-- (Africa Region Deep Dive)
+--Q7 Given our strategic push into Sub-Saharan Africa, how are Nigeria, Ghana, Kenya, Ethiopia, and Tanzania performing individually? 
+-- Which product categories resonate most in these markets?
+
+
+-- Query
+SELECT 
+	country_name,
+	category_name,
+	SUM(gross_revenue_usd) gross_revenue
+FROM vw_sales_enriched
+WHERE country_name IN ('Nigeria','Ghana','Kenya','Ethiopia', 'Tanzania')
+AND order_status NOT IN ('cancelled','returned')
+GROUP BY country_name, category_name
+ORDER BY country_name, gross_revenue DESC
+
+
+
+-- (Market Maturity Revenue Mix)
+--Q8 What percentage of our total revenue comes from Developed, Developing, and Emerging markets respectively? (p1)
+-- Is our Emerging market penetration growing year over year? (p2)
+
+
+-- Query
+-- (p1)
+SELECT 
+	market_maturity,
+	SUM(gross_revenue_usd) gross_revenue,
+	ROUND(SUM(gross_revenue_usd) / SUM(SUM(gross_revenue_usd)) OVER() * 100, 2) revenue_percent
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY market_maturity
+ORDER BY gross_revenue DESC
+ 
+--(p2)
+SELECT 
+	market_maturity,
+	YEAR(transaction_date) sale_year,
+	ROUND(SUM(gross_revenue_usd),0) gross_revenue,
+	ROUND(SUM(gross_revenue_usd) / SUM(SUM(gross_revenue_usd)) OVER(PARTITION BY YEAR(transaction_date)) * 100, 2) gross_revenue_prct
+FROM vw_sales_enriched
+WHERE order_status NOT IN ('cancelled','returned')
+GROUP BY market_maturity, YEAR(transaction_date)
+
+
+-- (Product-Market Fit by Country)
+--Q9 Which products sell disproportionately well in specific countries? (p1)
+-- Are there untapped opportunities where products performing well elsewhere are not yet gaining traction in certain markets? (p2)
+
+
+-- Query
+-- (p1)
+WITH ranked AS (
+SELECT 
+	country_name,
+	product_name,
+	SUM(gross_revenue_usd) gross_revenue,
+	ROW_NUMBER() over(PARTITION BY country_name ORDER BY SUM(gross_revenue_usd) DESC) rnk
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY country_name, product_name
+ORDER BY SUM(gross_revenue_usd) DESC
+)
+SELECT * FROM ranked
+WHERE rnk = 1
+ORDER BY gross_revenue DESC
+
+--(p2)
+WITH ranked AS (
+SELECT 
+	product_name,
+	SUM(gross_revenue_usd) gross_revenue,
+	ROW_NUMBER() over(ORDER BY SUM(gross_revenue_usd) DESC) rnk
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY product_name
+),
+glob AS (
+SELECT
+	v.country_name,
+	v.product_name,
+	SUM(gross_revenue_usd) gross_revenue
+FROM vw_sales_enriched v 
+LEFT JOIN ranked r ON v.product_name = r.product_name
+WHERE r.rnk <= 10
+AND v.order_status NOT IN ('returned','cancelled')
+GROUP BY v.country_name, v.product_name
+
+)
+SELECT * FROM glob
+WHERE gross_revenue < 500
+ORDER BY gross_revenue 
+
+
+-- (Average Transaction Value by Country)
+--Q10 How does average transaction value in USD compare across our markets? Which markets show premium willingness-to-pay versus price-sensitive behavior?
+
+
+-- Query
+SELECT 
+	country_name,
+	market_maturity,
+	ROUND(AVG(gross_revenue_usd),0) avg_gross_revenue
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY country_name
+ORDER BY AVG(gross_revenue_usd) DESC
+
+
+-- PRODUCT & BRAND PERFORMANCE OVERVIEW
+
+
+-- (Top Revenue Brands)
+--Q11 Which of our 65+ brands generate the most revenue? Among our three brand tiers Mass Market, Premium, and Prestige delivers the best margin profile?
+
+
+-- Query
+SELECT
+	brand_name,
+	brand_tier, 
+	SUM(gross_revenue_usd) gross_revenue,
+	ROUND(AVG(gross_margin_pct),2) gross_margin_pct,
+	ROUND(SUM(gross_revenue_usd) / SUM(SUM(gross_revenue_usd)) OVER() * 100, 2) margin_prct
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY brand_name, brand_tier
+ORDER BY SUM(gross_revenue_usd) DESC
+
+
+-- (Skin Care Category Deep Dive)
+--Q12 Within our largest category of over 100 products, which specific product types Serums, Body Lotions, Face Wash, SPF, Bar Soap, etc. drive the most revenue? Which are underperforming?
+
+
+-- Query
+SELECT
+	product_type,
+	ROUND(SUM(gross_revenue_usd),0) gross_revenue
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+AND category_name = 'Skin Care'
+GROUP BY product_type
+ORDER BY gross_revenue DESC
+
+
+-- (Prestige vs Mass Market Strategy)
+--Q13 Prestige brands like Dermalogica and Paula's Choice carry higher unit prices but lower sales volume. 
+-- Is the margin premium from these brands actually justifying their lower sales velocity compared to Mass Market brands?
+
+
+-- Query
+SELECT
+	brand_name,
+	brand_tier, 
+	SUM(gross_revenue_usd) gross_revenue,
+	ROUND(AVG(gross_margin_pct),2) gross_margin_pct,
+	ROUND(SUM(gross_revenue_usd) / SUM(SUM(gross_revenue_usd)) OVER() * 100, 2) margin_prct
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY brand_tier
+ORDER BY SUM(gross_revenue_usd) DESC
+
+
+-- (Customer Rating vs Sales Performance)
+--Q14 Is there a meaningful relationship between a product's average customer rating and its sales volume? 
+-- Which high-revenue products have dangerously low ratings and represent a churn risk?
+
+
+-- Query
+SELECT 
+	p.product_name,
+	ROUND(SUM(s.gross_revenue_usd),0) rev,
+	ROUND(AVG(fct.rating),0) avg_rating
+FROM fact_sales_transactions s
+JOIN dim_products p ON s.product_id = p.product_id
+LEFT JOIN fact_customer_reviews fct ON s.product_id = fct.product_id
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY p.product_name
+HAVING avg_rating < 4
+ORDER BY rev DESC
+
+
+-- (Sustainability Certification Premium)
+--Q15 Do products carrying sustainability certifications like Rainforest Alliance, RSPO, Vegan Certified command higher prices or sell at higher volumes? 
+-- Does this support the business case for our sustainability investment?
+
+
+-- Query
+SELECT
+	ROW_NUMBER() OVER(ORDER BY gross_revenue DESC) Rankk,
+	(CASE WHEN sustainability_cert IS NULL THEN 'No Certification' ELSE sustainability_cert END) cert_status,
+	COUNT(DISTINCT product_name) product_count,
+	COUNT(quantity_sold) Quantity_sold,
+	ROUND(AVG(unit_price_usd)) Avg_unit_price,
+	SUM(gross_revenue_usd) gross_revenue
+FROM unilever_analytics.vw_sales_enriched
+WHERE order_status NOT IN ('returned','cancelled')
+GROUP BY cert_status
+ORDER BY  gross_revenue DESC
+
+
+-- (Stockout Revenue Loss)
+--Q16 Which products have the highest stockout days across our markets? What is the estimated revenue being lost as a direct result of those inventory gaps?
+
+
+-- Query
+SELECT
+	p.product_name,
+	SUM(COALESCE(fi.stockout_days,0)) stock_out_days,
+	p.base_price_usd,
+	ROUND(AVG(fi.units_sold_month),0) Avg_monthly_units,
+	ROUND((SUM(COALESCE(fi.stockout_days,0)) / 30) * AVG(fi.units_sold_month) * p.base_price_usd, 0) est_revenue_lost_usd
+FROM unilever_analytics.dim_products p
+LEFT JOIN fact_inventory fi ON p.product_id = fi.product_id
+GROUP BY p.product_name, p.base_price_usd
+HAVING stock_out_days > 0
+ORDER BY stock_out_days	DESC
+
+
+-- (Customer Segmentation by Type)
+--Q17 How does revenue, transaction frequency, and average order value differ across our customer types,  Individual Consumers, Retail Chains, Wholesale Distributors, and Healthcare Facilities?
+
+
+-- Query
+SELECT 
+	COALESCE(customer_type, 'Unspecified') customer_type,
+	COALESCE(loyalty_tier,'Unspecified') loyalty_tier,
+	ROUND(SUM(gross_revenue_usd),2) gross_revenue,
+	COUNT(transaction_id) transaction_count,
+	ROUND(SUM(gross_revenue_usd) / COUNT(transaction_id),2) avg_order_value
+FROM vw_sales_enriched
+WHERE order_status NOT IN ('Cancelled','Returned')
+GROUP BY customer_type, loyalty_tier
+ORDER BY gross_revenue DESC
+
+
+-- (Loyalty Tier Revenue Concentration)
+--Q18 Platinum and Gold loyalty customers likely represent a disproportionate share of our revenue. What does the actual revenue concentration across all four loyalty tiers look like — is it a true Pareto distribution?
+
+
+-- Query
+SELECT 
+	COALESCE(loyalty_tier,'Anonymous') loyalty_tier,
+	COUNT(DISTINCT transaction_id) total_transaction,
+	ROUND(COUNT(DISTINCT transaction_id) / SUM(COUNT(DISTINCT transaction_id)) OVER() * 100,2) transaction_pct,
+	ROUND(SUM(gross_revenue_usd),0) revenue_share,
+	ROUND(SUM(gross_revenue_usd) / SUM(SUM(gross_revenue_usd)) OVER() * 100,2) revenue_pct_share
+FROM vw_sales_enriched
+WHERE order_status NOT IN ('Cancelled','Returned')
+GROUP BY COALESCE(loyalty_tier,'Unspecified')
+
+
+
+-- (Acquisition Channel Lifetime Value)
+--Q19 Which acquisition channels, Social Media, TV Ad, Retail Store, Word of Mouth, and Distributor are producing the highest lifetime value customers? Where should we be investing our acquisition budget?
+
+
+-- Query
+SELECT 
+	c.acquisition_channel,
+	COUNT(fs.transaction_id) order_count,
+	ROUND(SUM(fs.gross_revenue_usd),0) gross_revenue,
+	ROUND(SUM(c.lifetime_value_usd),0) lifetime_value
+FROM unilever_analytics.dim_customers c
+LEFT JOIN fact_sales_transactions fs ON c.customer_id = fs.customer_id
+WHERE fs.order_status NOT IN ('Returned', 'Cancelled')
+GROUP BY c.acquisition_channel
+ORDER BY lifetime_value DESC
+
+
+-- (Payment Method Trends)
+--Q20 Between Credit Card, Mobile Money, Bank Transfer — which of these payment methods are growing across our markets? (p1)
+-- Is Mobile Money, which is critical across Africa, gaining enough adoption to warrant dedicated checkout optimization? (p2)
+
+
+-- Query
+SELECT 
+	YEAR(fs.transaction_date) sale_year,
+	fs.payment_method,
+	COUNT(fs.transaction_id) transaction_count,
+	ROUND(COUNT(fs.transaction_id) / SUM(COUNT(fs.transaction_id)) OVER(PARTITION BY YEAR(fs.transaction_date)) * 100,2) pct_share
+FROM unilever_analytics.dim_countries co
+LEFT JOIN unilever_analytics.dim_customers c ON c.country_id = co.country_id
+LEFT JOIN fact_sales_transactions fs 
+ON fs.customer_id = c.customer_id
+WHERE fs.order_status NOT IN ('Returned', 'Cancelled')
+AND fs.payment_method IS NOT NULL
+GROUP BY sale_year, fs.payment_method
+ORDER BY sale_year, transaction_count DESC
+
+
+-- (Net Promoter Score by Segment)
+--Q21 What is the NPS breakdown, Promoters, Passives, and Detractors across each of our product segments? Which segments are at risk of customer churn based on sentiment scores?
+
+
+-- Query
+SELECT 
+	ds.segment_name,
+	SUM(CASE WHEN fc.nps_score >= 9 THEN 1 ELSE 0 END) Promoters,
+	SUM(CASE WHEN fc.nps_score BETWEEN 7 AND 8 THEN 1 ELSE 0 END) Passives,
+	SUM(CASE WHEN fc.nps_score <= 6 THEN 1 ELSE 0 END) Detractors,
+	COUNT(fc.review_id) Total_reviews,
+	ROUND((SUM(CASE WHEN fc.nps_score >= 9 THEN 1 ELSE 0 END) - SUM(CASE WHEN fc.nps_score <= 6 THEN 1 ELSE 0 END)) / COUNT(fc.review_id) * 100, 1) Nps_score
+FROM fact_customer_reviews fc
+INNER JOIN dim_products dp ON fc.product_id = dp.product_id
+INNER JOIN dim_brands db ON dp.brand_id = db.brand_id
+INNER JOIN dim_categories dc ON db.category_id = dc.category_id
+INNER JOIN dim_segments ds ON dc.segment_id = ds.segment_id
+GROUP BY ds.segment_name
+ORDER BY Nps_score DESC
+
+
+-- (High-Value Lapsed Customers)
+-- Q22 Which of our Platinum and Gold tier customers have not transacted in the last 6 months? What is the total revenue at risk if these lapsed customers churn permanently?
+
+
+-- Query
+SELECT 
+	SUM(gross_revenue) Total_revenue
+FROM (
+SELECT 
+	cu.customer_id,
+	SUM(gross_revenue_usd) gross_revenue,
+	MAX(fs.transaction_date) last_order_date
+FROM unilever_analytics.dim_customers cu
+JOIN unilever_analytics.fact_sales_transactions fs 
+ON cu.customer_id = fs.customer_id
+WHERE cu.loyalty_tier IN ('Platinum','Gold')
+AND fs.order_status NOT IN ('Returned','Cancelled')
+GROUP BY cu.customer_id
+HAVING last_order_date < '2024-07-01'
+)Lapsed_customers
+
+
+
+-- (Gender & Product Preference)
+--Q23 How does purchasing behavior differ between male and female customers across our product segments and categories? 
+-- Are there categories where one gender is significantly underrepresented that we could target with focused campaigns?
+
+
+-- Query
+SELECT 
+	dp.product_type,
+	cu.gender,
+COUNT(fs.transaction_id) gender_patronage_count
+FROM unilever_analytics.dim_customers cu
+INNER JOIN unilever_analytics.fact_sales_transactions fs ON cu.customer_id = fs.customer_id
+INNER JOIN dim_products dp ON fs.product_id = dp.product_id
+WHERE fs.order_status NOT IN ('Returned','Cancelled')
+AND dp.product_type IS NOT NULL
+GROUP BY dp.product_type, cu.gender
+
+
+
