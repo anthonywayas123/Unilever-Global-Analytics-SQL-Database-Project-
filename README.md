@@ -349,5 +349,8 @@ These are the findings most likely to save or generate significant money:
 
 ---
 
-*Built by Anthony Wayas - Data Analyst | SQL, Power BI, Excel, Python*
-*Portfolio project demonstrating end-to-end analytical capability from database design through business insight generation*
+####  Author
+##### Anthony Wayas 
+Data Analyst | Power BI | Excel | SQL | Python |
+
+This project is part of my data analytics portfolio demonstrating end-to-end SQL DBMS and Business Intelligence skills.
