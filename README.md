@@ -284,8 +284,6 @@ All five business segments have negative NPS scores, this means detractors outnu
 
 ## Key Standout Insights
 
-These are the findings most likely to save or generate significant money:
-
 **1. $33,814 lost from 19 days of one product being out of stock** - Dermalogica SPF 15. This single finding justifies an immediate investment in inventory management software for Prestige product lines.
 
 **2. All 5 segments have negative NPS** - No segment has more promoters than detractors. For a $60 billion company this represents billions in potential revenue at risk from customer churn.
